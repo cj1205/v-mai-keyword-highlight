@@ -5,19 +5,6 @@
 * @file v-mai-keyword-highlight plugin definition
 */
 
-function deepClone (vnodes, createElement) {
-  let clonedProperties = ['text', 'isComment', 'componentOptions', 'elm', 'context', 'ns', 'isStatic', 'key']
-  function cloneVNode (vnode) {
-    let clonedChildren = vnode.children && vnode.children.map(cloneVNode)
-    let cloned = createElement(vnode.tag, vnode.data, clonedChildren)
-    clonedProperties.forEach(function (item) {
-      cloned[item] = vnode[item]
-    })
-    return cloned
-  }
-  return vnodes.map(cloneVNode)
-}
-
 function uuidv4 () {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     let r = Math.random() * 16 | 0
@@ -28,8 +15,9 @@ function uuidv4 () {
 
 const _keywordClassName = 'vue-keyword-highlight-directive-' + uuidv4()
 
-function replaceTextNodes (cNode, keyword, style, multiple) {
-  let newHtml = cNode.textContent.replace(new RegExp('(' + keyword.replace(/[-\\^$*+?.()|[\]{}/]/g, '\\$&') + ')', 'ig'),
+function replaceTextNodes (cNode, regexPattern, style) {
+  let newHtml = cNode.textContent.replace(
+    regexPattern,
     '<span data-ref="' + _keywordClassName + '" style="' + style + '">$1</span>'
   )
   let rNode = document.createElement('span')
@@ -41,21 +29,40 @@ function replaceTextNodes (cNode, keyword, style, multiple) {
   return newHtml !== cNode.textContent
 }
 
-function addKeywordEffects (el, keyword, style, multiple) {
-  if (!keyword) return
+function getTextNodes(root, keywords) {
+  if (!keywords || keywords.length == 0) return []
+  let minLength = Math.min(...keywords.map((keyword) => {
+    return keyword ? keyword.length : 0
+  }))
   let founds = []
-  let walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false)
+  let walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false)
   let next = walk.nextNode()
   while (next) {
-    if (next.textContent.trim().length > 0 && !next.parentElement.classList.contains(_keywordClassName)) {
+    if (next.textContent.length >= minLength
+      && !next.parentElement.classList.contains(_keywordClassName)) {
       founds.push(next)
     }
     next = walk.nextNode()
   }
+  return founds
+}
+
+function addKeywordEffects (root, keywordString, style, matchCase, multiple) {
   let result = []
+  let keywords = multiple ? keywordString.split(' ').filter((keyword) => {
+    return keyword.length > 0
+  }): [keywordString]
+  let founds = getTextNodes(root, keywords)
+  let keywordRegex =  new RegExp(
+    '('
+    + keywords.map((keyword) => {
+      return keyword.replace(/[-\\^$*+?.()|[\]{}/]/g, '\\$&')
+    }).join('|') + ')',
+    (matchCase ? '' : 'i') + 'g'
+  )
   founds.forEach((item) => {
     let pNode = item.parentElement
-    if (replaceTextNodes(item, keyword, style)) {
+    if (replaceTextNodes(item, keywordRegex, style)) {
       result.push({'top': pNode.offsetTop, 'left': pNode.offsetLeft})
     }
   })
@@ -74,7 +81,7 @@ function removeKeywordEffects (root) {
 let vMaiKeywordHighlight = {}
 vMaiKeywordHighlight.install = function install (Vue) {
   let timeoutIDs = {}
-  let defaultProps = {'keyword':'', 'style':'', 'callback': function () {}, 'delay': 500, 'key': ''}
+  let defaultProps = {'keyword':'', 'style':'background-color:yellow', 'callback': function () {}, 'delay': 500, 'key': ''}
   Vue.directive('mai-keyword-highlight', {
     bind: function bind (el, binding, vnode) {
       let options = Object.assign({}, defaultProps, binding.value)
@@ -82,32 +89,20 @@ vMaiKeywordHighlight.install = function install (Vue) {
 
       if (!options.keyword) return
       timeoutIDs[options.key] = setTimeout(() => {
-        let result = addKeywordEffects(el, options.keyword, options.style)
+        let result = addKeywordEffects(el, options.keyword.toString(), options.style, options['match-case'], options.multiple)
         options.callback(result)
       }, options.delay)
     },
     componentUpdated: function componentUpdated (el, binding, vnode) {
       let options = Object.assign({}, defaultProps, binding.value)
       clearTimeout(timeoutIDs[options.key])
-      let fakeELement = document.createElement('div')
-      let clonedNode = deepClone([vnode], vnode.context.$createElement)[0]
-      let newEl = vnode.context.__patch__(fakeELement, clonedNode, false)
-      while (el.firstChild) {
-        el.removeChild(el.firstChild)
-      }
-      newEl.childNodes.forEach((item) => {
-        el.appendChild(item)
-      })
-      /*
-      // comment out below codes because el will be updated to latest due to above codes
       if (!options.keyword) {
         removeKeywordEffects(el)
         return
       }
-      */
       timeoutIDs[options.key] = setTimeout(() => {
         removeKeywordEffects(el)
-        let result = addKeywordEffects(el, options.keyword, options.style)
+        let result = addKeywordEffects(el, options.keyword.toString(), options.style, options['match-case'], options.multiple)
         options.callback(result)
       }, options.delay)
     }
